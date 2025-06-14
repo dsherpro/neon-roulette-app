@@ -1,3 +1,6 @@
+//
+// НОВЫЙ SCRIPT.JS С ТАЙМАУТОМ И УЛУЧШЕННОЙ ОБРАБОТКОЙ ОШИБОК
+//
 (function() {
     'use strict';
 
@@ -16,32 +19,24 @@
     const balanceAmountEl = document.getElementById('balance-amount');
     const userNameEl = document.getElementById('user-name');
     const canvas = document.getElementById('roulette-canvas');
-    const betAmountInput = document.getElementById('bet-amount');
-    const colorButtons = document.querySelectorAll('.color-btn');
-    const spinButton = document.getElementById('spin-button');
-    const spinButtonText = spinButton.querySelector('.btn-text');
-    const boxButtons = document.querySelectorAll('.box-btn');
-    const modalOverlay = document.getElementById('result-modal');
-    const modalTitle = document.getElementById('modal-title');
-    const modalText = document.getElementById('modal-text');
-    const modalCloseBtn = document.getElementById('modal-close-btn');
+    // ... и остальные DOM элементы
 
     // --- Configuration ---
-    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ URL С RENDER
+    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ УБЕДИТЕСЬ, ЧТО ИСПОЛЬЗУЕТЕ ВАШ URL С RENDER
 
-    const segments = [
-        { color: '#27ae60', name: 'green' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
-        { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
-        { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
-        { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
-        { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
-    ];
-    const segmentAngle = 2 * Math.PI / segments.length;
-    
-    // --- State ---
-    const state = {
-        userId: null, isSpinning: false, selectedColor: null, currentAngle: 0, balance: 0,
-    };
+    // ... остальной код (segments, state) без изменений ...
+
+    // --- НОВАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+    async function fetchWithTimeout(resource, options = {}, timeout = 15000) {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        const response = await fetch(resource, {
+            ...options,
+            signal: controller.signal  
+        });
+        clearTimeout(id);
+        return response;
+    }
 
     // --- Initialization ---
     async function initializeApp() {
@@ -55,24 +50,37 @@
             console.error("Initialization failed:", error);
             balanceAmountEl.textContent = 'Ошибка';
             userNameEl.textContent = 'Нет связи';
-            tg.showAlert('Не удалось загрузить данные. Проверьте интернет-соединение или попробуйте позже.');
+            if (error.name === 'AbortError') {
+                 tg.showAlert('Сервер не отвечает. Возможно, он запускается. Попробуйте еще раз через минуту.');
+            } else {
+                 tg.showAlert('Не удалось загрузить данные. Проверьте интернет-соединение или попробуйте позже.');
+            }
         } finally {
             loader.classList.add('hidden');
         }
     }
 
-    // --- API Communication ---
+    // --- API Communication (ИЗМЕНЕНО) ---
     async function fetchUserData() {
         if (!state.userId) { throw new Error("User ID is not defined."); }
-        const response = await fetch(`${API_BASE_URL}/api/user/${state.userId}`);
+        // Используем новую функцию с таймаутом
+        const response = await fetchWithTimeout(`${API_BASE_URL}/api/user/${state.userId}`);
         if (!response.ok) { throw new Error(`Network response was not ok: ${response.statusText}`); }
         const data = await response.json();
         updateBalance(data.balance);
         userNameEl.textContent = data.name || 'Игрок';
     }
 
-    // --- UI & Event Handlers ---
+    // ... остальная часть файла script.js (addEventListeners, handleSpin и т.д.) остается БЕЗ ИЗМЕНЕНИЙ ...
+    // Скопируйте весь остальной код из предыдущей версии файла, он полностью рабочий.
+    
+    // Вставьте сюда остаток вашего рабочего `script.js`, начиная с функции `addEventListeners`
     function addEventListeners() {
+        const colorButtons = document.querySelectorAll('.color-btn');
+        const spinButton = document.getElementById('spin-button');
+        const modalCloseBtn = document.getElementById('modal-close-btn');
+        const boxButtons = document.querySelectorAll('.box-btn');
+
         colorButtons.forEach(button => button.addEventListener('click', handleColorSelect));
         spinButton.addEventListener('click', handleSpin);
         modalCloseBtn.addEventListener('click', hideResultModal);
@@ -81,6 +89,7 @@
     
     function handleColorSelect(event) {
         if (state.isSpinning) return;
+        const colorButtons = document.querySelectorAll('.color-btn');
         colorButtons.forEach(btn => btn.classList.remove('selected'));
         event.currentTarget.classList.add('selected');
         state.selectedColor = event.currentTarget.dataset.color;
@@ -109,12 +118,25 @@
         });
     }
 
-    function updateSpinButton(enabled, text) { spinButton.disabled = !enabled; spinButtonText.textContent = text; }
-    function updateBalance(newBalance) { state.balance = newBalance; balanceAmountEl.textContent = Math.floor(newBalance); }
-    function showResultModal(title, text) { modalTitle.textContent = title; modalText.innerHTML = text; modalOverlay.classList.add('visible'); }
-    function hideResultModal() { modalOverlay.classList.remove('visible'); }
+    function updateSpinButton(enabled, text) { 
+        const spinButton = document.getElementById('spin-button');
+        const spinButtonText = spinButton.querySelector('.btn-text');
+        spinButton.disabled = !enabled; 
+        spinButtonText.textContent = text; 
+    }
+    function updateBalance(newBalance) { 
+        state.balance = newBalance; 
+        document.getElementById('balance-amount').textContent = Math.floor(newBalance); 
+    }
+    function showResultModal(title, text) {
+        document.getElementById('modal-title').textContent = title; 
+        document.getElementById('modal-text').innerHTML = text; 
+        document.getElementById('result-modal').classList.add('visible'); 
+    }
+    function hideResultModal() { 
+        document.getElementById('result-modal').classList.remove('visible'); 
+    }
 
-    // --- Roulette Drawing & Animation ---
     const drawRouletteWheel = () => {
         const canvasEl = document.getElementById('roulette-canvas');
         if (!canvasEl) return;
@@ -138,7 +160,7 @@
 
     async function handleSpin() {
         if (state.isSpinning || !state.selectedColor) return;
-        const betAmount = parseInt(betAmountInput.value, 10);
+        const betAmount = parseInt(document.getElementById('bet-amount').value, 10);
         if (isNaN(betAmount) || betAmount <= 0) { tg.showAlert('Некорректная ставка.'); return; }
         if (betAmount > state.balance) { tg.showAlert('Недостаточно средств.'); return; }
         state.isSpinning = true;
