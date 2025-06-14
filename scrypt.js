@@ -18,7 +18,7 @@
     const modalCloseBtn = document.getElementById('modal-close-btn');
 
     // --- Configuration ---
-    const API_BASE_URL = 'https://YOUR-RENDER-APP-NAME.onrender.com'; // ❗️ ЗАМЕНИТЬ НА ШАГЕ 3
+    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ ЗАМЕНИТЬ НА ШАГЕ 3
     const ctx = canvas.getContext('2d');
     const segments = [
         { color: '#27ae60', name: 'green' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
