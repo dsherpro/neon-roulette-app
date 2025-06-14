@@ -1,295 +1,193 @@
-// Этот код должен быть в файле script.js
+(function() {
+    'use strict';
 
-document.addEventListener('DOMContentLoaded', () => {
-    // 1. НАСТРОЙКА API И КОНФИГУРАЦИЯ
-    const tg = window.Telegram?.WebApp || {};
-    // Для тестирования в обычном браузере, а не в Telegram
-    if (!tg.initData) {
-        console.warn("Telegram API не найдено, используется mock-объект.");
-        window.Telegram = {
-            WebApp: {
-                initDataUnsafe: {
-                    user: { id: 12345, first_name: 'Тестер' }
-                },
-                showAlert: (m) => alert(m),
-                sendData: (d) => console.log('Отправка данных боту:', d),
-                ready: () => {},
-                expand: () => {}
-            }
-        };
-    }
+    // --- DOM Elements ---
+    const tg = window.Telegram.WebApp;
+    const loader = document.getElementById('loader');
+    const balanceAmountEl = document.getElementById('balance-amount');
+    const userNameEl = document.getElementById('user-name');
+    const canvas = document.getElementById('roulette-canvas');
+    const betAmountInput = document.getElementById('bet-amount');
+    const colorButtons = document.querySelectorAll('.color-btn');
+    const spinButton = document.getElementById('spin-button');
+    const spinButtonText = spinButton.querySelector('.btn-text');
+    const boxButtons = document.querySelectorAll('.box-btn');
+    const modalOverlay = document.getElementById('result-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalText = document.getElementById('modal-text');
+    const modalCloseBtn = document.getElementById('modal-close-btn');
+
+    // --- Configuration ---
+    const API_BASE_URL = 'https://YOUR-RENDER-APP-NAME.onrender.com'; // ❗️ ЗАМЕНИТЬ НА ШАГЕ 3
+    const ctx = canvas.getContext('2d');
+    const segments = [
+        { color: '#27ae60', name: 'green' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
+        { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
+        { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
+        { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
+        { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
+    ];
+    const segmentAngle = 2 * Math.PI / segments.length;
     
-    tg.ready();
-    tg.expand();
-
-    const config = {
-        minBet: 10,
-        minWithdraw: 500,
-        // Шанс победы и выплаты должны быть на сервере, но для Frontend демонстрации оставим их здесь
-        // ВАЖНО: В реальном проекте это должно рассчитываться на сервере!
-        winRateChance: 0.48, // Более реалистичный шанс победы (48%)
-        payouts: { red: 2, black: 2, green: 14 },
-    };
-
-    // 2. ПОЛУЧЕНИЕ ЭЛЕМЕНТОВ СТРАНИЦЫ
-    const elements = {
-        loader: document.getElementById('loader'),
-        app: document.getElementById('app'),
-        balanceAmount: document.getElementById('balance-amount'),
-        username: document.getElementById('username'),
-        userId: document.getElementById('user-id'),
-        
-        // Рулетка
-        betAmount: document.getElementById('bet-amount'),
-        wheel: document.getElementById('wheel'),
-        resultMessage: document.getElementById('result-message'),
-        spinButton: document.getElementById('spin-button'),
-        betButtons: document.querySelectorAll('.bet-btn'),
-
-        // Коробки
-        openBoxButton: document.getElementById('open-box-button'),
-        luckBox: document.getElementById('luck-box'),
-        multiplierInfo: document.getElementById('multiplier'),
-        
-        // Кошелек
-        topUpButton: document.getElementById('top-up-button'),
-        withdrawAmount: document.getElementById('withdraw-amount'),
-        withdrawButton: document.getElementById('withdraw-button'),
-
-        // Навигация
-        navButtons: document.querySelectorAll('.nav-btn'),
-        tabContents: document.querySelectorAll('.tab-content')
-    };
-
-    // 3. СОСТОЯНИЕ ИГРЫ
-    let state = {
-        balance: 100,      // Начальный баланс для новых игроков (должен приходить с сервера)
+    // --- State ---
+    const state = {
+        userId: null,
         isSpinning: false,
-        currentBetType: null,
-        winMultiplier: 1.0, // Множитель от коробки
-        isBoxOpening: false
+        selectedColor: null,
+        currentAngle: 0,
+        balance: 0,
     };
 
-    // 4. ОСНОВНЫЕ ФУНКЦИИ
-    const updateBalanceDisplay = () => {
-        elements.balanceAmount.textContent = Math.floor(state.balance);
-    };
-    
-    const updateMultiplierDisplay = () => {
-        elements.multiplierInfo.textContent = `x${state.winMultiplier.toFixed(1)}`;
-        if (state.winMultiplier > 1.0) {
-            elements.multiplierInfo.style.color = 'var(--gold)';
-            elements.multiplierInfo.style.fontWeight = 'bold';
-        } else {
-            elements.multiplierInfo.style.color = 'var(--text-color)';
-            elements.multiplierInfo.style.fontWeight = 'normal';
-        }
-    };
-
-    const disableControls = (disabled) => {
-        state.isSpinning = disabled;
-        elements.spinButton.disabled = disabled;
-        elements.betButtons.forEach(b => b.disabled = disabled);
-        elements.betAmount.disabled = disabled;
-    };
-    
-    const showResult = (message, color = 'var(--text-color)') => {
-        elements.resultMessage.textContent = message;
-        elements.resultMessage.style.color = color;
+    // --- Initialization ---
+    function initializeApp() {
+        tg.ready();
+        tg.expand();
+        state.userId = tg.initDataUnsafe?.user?.id || 'test_user';
+        fetchUserData().then(() => { loader.classList.add('hidden'); });
+        drawRouletteWheel();
+        addEventListeners();
     }
 
-    // 5. ЛОГИКА ИГРЫ
+    // --- API Communication ---
+    async function fetchUserData() {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/user/${state.userId}`);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const data = await response.json();
+            updateBalance(data.balance);
+            userNameEl.textContent = data.name || 'Игрок';
+        } catch (error) {
+            console.error("Error fetching user data:", error);
+            tg.showAlert('Не удалось загрузить данные пользователя.');
+        }
+    }
 
-    // -- РУЛЕТКА --
-    const spin = () => {
-        const amount = parseInt(elements.betAmount.value, 10);
-        if (!state.currentBetType) return tg.showAlert("Сначала выберите цвет для ставки!");
-        if (isNaN(amount) || amount < config.minBet) return tg.showAlert(`Минимальная ставка: ${config.minBet} ★`);
-        if (amount > state.balance) return tg.showAlert("Недостаточно средств на балансе!");
+    async function postSpinRequest() {
+        const betAmount = parseInt(betAmountInput.value, 10);
+        if (isNaN(betAmount) || betAmount <= 0) { tg.showAlert('Некорректная сумма ставки.'); return null; }
+        if (betAmount > state.balance) { tg.showAlert('Недостаточно средств.'); return null; }
 
-        disableControls(true);
-        state.balance -= amount;
-        updateBalanceDisplay();
-        showResult(`Ставка ${amount} ★ на ${state.currentBetType}...`, 'var(--text-color)');
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/spin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: state.userId, bet: betAmount, color: state.selectedColor }),
+            });
+            if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error || 'Ошибка сервера'); }
+            return await response.json();
+        } catch (error) { console.error('Spin request failed:', error); tg.showAlert(`Ошибка: ${error.message}`); return null; }
+    }
 
-        // --- ВНИМАНИЕ: ОПАСНАЯ КЛИЕНТСКАЯ ЛОГИКА ---
-        // В реальном проекте нужно отправить запрос на сервер, а сервер вернет результат.
-        // Сейчас же результат рассчитывается прямо в браузере.
-        
-        // Имитация задержки ответа сервера (в будущем здесь будет fetch)
-        setTimeout(() => {
-            // Определяем выигрышный цвет. 'green' имеет гораздо меньший шанс.
-            const isWinner = Math.random() < (state.currentBetType === 'green' ? 0.06 : config.winRateChance);
-            const winningColor = isWinner 
-                ? state.currentBetType 
-                : ['red', 'black', 'green'].filter(c => c !== state.currentBetType)[Math.floor(Math.random() * 2)];
-
-            // Анимация рулетки
-            const wheelSegments = ['G', 'B', 'R', 'B', 'R', 'B', 'R']; // G-green, B-black, R-red
-            const colorMap = { 'green': 'G', 'black': 'B', 'red': 'R' };
-            const winningSymbol = colorMap[winningColor];
-
-            const targetIndexes = wheelSegments.map((seg, i) => seg === winningSymbol ? i : -1).filter(i => i !== -1);
-            const targetIndex = targetIndexes[Math.floor(Math.random() * targetIndexes.length)];
-            const landingPosition = (5 * wheelSegments.length + targetIndex) * 40 + (Math.random() - 0.5) * 32;
-
-            elements.wheel.style.transition = 'none';
-            elements.wheel.style.backgroundPositionX = `${(Math.random() * -280)}px`;
-            
-            setTimeout(() => {
-                elements.wheel.style.transition = 'background-position-x 5s cubic-bezier(0.15, 0.7, 0.25, 1)';
-                elements.wheel.style.backgroundPositionX = `-${landingPosition}px`;
-            }, 50);
-
-            // Обработка результата после анимации
-            setTimeout(() => {
-                if (isWinner) {
-                    const baseWinnings = amount * config.payouts[winningColor];
-                    const totalWinnings = baseWinnings * state.winMultiplier;
-                    state.balance += totalWinnings;
-                    
-                    let resultText = `ПОБЕДА! +${Math.floor(totalWinnings)} ★`;
-                    if (state.winMultiplier > 1.0) {
-                        resultText += ` (с множителем x${state.winMultiplier.toFixed(1)})`;
-                        state.winMultiplier = 1.0; // Сбрасываем множитель после использования
-                        updateMultiplierDisplay();
-                    }
-                    showResult(resultText, 'var(--green)');
-
-                } else {
-                    showResult(`Проигрыш. Выпал цвет: ${winningColor}`, 'var(--red)');
-                }
-                updateBalanceDisplay();
-                disableControls(false);
-                elements.betButtons.forEach(b => b.classList.remove('selected'));
-                state.currentBetType = null;
-            }, 5200);
-
-        }, 500); // Конец имитации задержки
-    };
-
-    // -- КОРОБКИ --
-    const openBox = () => {
-        if (state.isBoxOpening) return;
-        state.isBoxOpening = true;
-
-        elements.luckBox.classList.add('opening');
-        
-        setTimeout(() => {
-            elements.luckBox.classList.remove('opening');
-            // Генерируем случайный множитель от 1.1 до 2.0
-            const newMultiplier = Math.random() * 0.9 + 1.1;
-            state.winMultiplier = newMultiplier;
-            updateMultiplierDisplay();
-            tg.showAlert(`Поздравляем! Ваш следующий выигрыш будет умножен на x${newMultiplier.toFixed(1)}!`);
-            state.isBoxOpening = false;
-        }, 1000); // Анимация длится 0.5с, даем еще запас
-    };
+    // --- UI & Event Handlers ---
+    function addEventListeners() {
+        colorButtons.forEach(button => button.addEventListener('click', handleColorSelect));
+        spinButton.addEventListener('click', handleSpin);
+        modalCloseBtn.addEventListener('click', hideResultModal);
+        boxButtons.forEach(button => button.addEventListener('click', handleOpenBox));
+    }
     
-    // -- КОШЕЛЕК --
-    const requestWithdrawal = () => {
-        const amount = parseInt(elements.withdrawAmount.value, 10);
+    function handleColorSelect(event) {
+        if (state.isSpinning) return;
+        colorButtons.forEach(btn => btn.classList.remove('selected'));
+        event.currentTarget.classList.add('selected');
+        state.selectedColor = event.currentTarget.dataset.color;
+        updateSpinButton(true, 'Крутить!');
+    }
 
-        if (isNaN(amount) || amount <= 0) {
-            return tg.showAlert('Пожалуйста, введите корректную сумму для вывода.');
-        }
-        if (amount < config.minWithdraw) {
-            return tg.showAlert(`Минимальная сумма для вывода: ${config.minWithdraw} ★.`);
-        }
-        if (amount > state.balance) {
-            return tg.showAlert('У вас недостаточно средств на балансе для вывода этой суммы.');
-        }
+    async function handleOpenBox(event) {
+        if (state.isSpinning) return;
+        const button = event.currentTarget;
+        const boxType = button.dataset.boxtype;
+        const boxCost = button.querySelector('.box-cost').textContent;
 
-        // Формируем объект данных для отправки на сервер (вашему боту)
-        const data = {
-            type: 'withdraw_request',
-            amount: amount,
-            userId: tg.initDataUnsafe?.user?.id
-        };
-
-        // Используем встроенный метод Telegram API для отправки данных
-        tg.sendData(JSON.stringify(data));
-        
-        // После отправки данных можно показать пользователю подтверждение
-        // В реальном проекте баланс должен списаться только после подтверждения от сервера.
-        // Сейчас для наглядности списываем сразу.
-        state.balance -= amount;
-        updateBalanceDisplay();
-        elements.withdrawAmount.value = '';
-        tg.showAlert('Ваша заявка на вывод была успешно отправлена администратору!');
-    };
-
-
-    // 6. ПРИВЯЗКА СОБЫТИЙ
-    const bindEvents = () => {
-        // Навигация по вкладкам
-        elements.navButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                elements.navButtons.forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                elements.tabContents.forEach(tab => {
-                    tab.classList.remove('active');
-                });
-                document.getElementById(button.dataset.tab).classList.add('active');
-            });
-        });
-
-        // Выбор цвета ставки
-        elements.betButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                if (state.isSpinning) return;
-                elements.betButtons.forEach(btn => btn.classList.remove('selected'));
-                button.classList.add('selected');
-                state.currentBetType = button.dataset.bet;
-            });
-        });
-
-        // Лимит ввода ставки
-        elements.betAmount.addEventListener('input', () => {
-            let value = parseInt(elements.betAmount.value, 10);
-            if (value > state.balance) {
-                elements.betAmount.value = state.balance;
+        tg.showConfirm(`Купить коробку "${boxType}" за ${boxCost}?`, async (confirmed) => {
+            if (confirmed) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/api/openbox`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: state.userId, boxType: boxType })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error);
+                    updateBalance(data.newBalance);
+                    showResultModal("Приз из коробки!", `Поздравляем! Вы выиграли <b>${data.wonAmount} ⭐</b>!`);
+                } catch (error) { tg.showAlert(`Ошибка: ${error.message}`); }
             }
         });
-        
-        // Кнопка вращения рулетки
-        elements.spinButton.addEventListener('click', spin);
-        
-        // Кнопка открытия бесплатной коробки
-        elements.openBoxButton.addEventListener('click', openBox);
+    }
 
-        // Кнопка запроса на вывод
-        elements.withdrawButton.addEventListener('click', requestWithdrawal);
-        
-        // Кнопка пополнения
-        elements.topUpButton.addEventListener('click', () => {
-            tg.showAlert('Функция пополнения через Telegram Stars находится в разработке.');
-        });
-    };
-    
-    // 7. ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
-    const main = () => {
-        try {
-            // Устанавливаем информацию о пользователе
-            elements.username.textContent = tg.initDataUnsafe?.user?.first_name || "User";
-            elements.userId.textContent = `ID: ${tg.initDataUnsafe?.user?.id || 'N/A'}`; // ID ТЕПЕРЬ ОТОБРАЖАЕТСЯ
-            
-            // В будущем баланс нужно будет получать с сервера
-            // loadBalanceFromServer(); 
-            updateBalanceDisplay();
-            updateMultiplierDisplay();
+    function updateSpinButton(enabled, text) { spinButton.disabled = !enabled; spinButtonText.textContent = text; }
+    function updateBalance(newBalance) { state.balance = newBalance; balanceAmountEl.textContent = Math.floor(newBalance); }
+    function showResultModal(title, text) { modalTitle.textContent = title; modalText.innerHTML = text; modalOverlay.classList.add('visible'); }
+    function hideResultModal() { modalOverlay.classList.remove('visible'); }
 
-            bindEvents();
-
-        } catch (e) {
-            console.error("Критическая ошибка при запуске приложения:", e);
-            document.body.innerHTML = `<div style="color: white; padding: 20px; text-align: center;">Произошла критическая ошибка. Пожалуйста, перезапустите Web App.</div>`;
-        } finally {
-            // Гарантированно убираем загрузчик, даже если была ошибка
-            elements.loader.classList.add('hidden');
-            elements.app.classList.add('loaded');
+    // --- Roulette Drawing & Animation ---
+    function drawRouletteWheel() {
+        const radius = canvas.width / 2;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.translate(radius, radius);
+        ctx.rotate(state.currentAngle);
+        for (let i = 0; i < segments.length; i++) {
+            const startAngle = i * segmentAngle;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, radius - 5, startAngle, startAngle + segmentAngle);
+            ctx.closePath();
+            ctx.fillStyle = segments[i].color;
+            ctx.fill();
         }
-    };
-    
-    main();
-});
+        ctx.restore();
+    }
+
+    async function handleSpin() {
+        if (state.isSpinning || !state.selectedColor) return;
+        state.isSpinning = true;
+        updateSpinButton(false, 'Вращение...');
+        const result = await postSpinRequest();
+        if (result) {
+            updateBalance(result.newBalance + result.winAmount);
+            startSpinAnimation(result);
+        } else { state.isSpinning = false; updateSpinButton(true, 'Крутить!'); }
+    }
+
+    function startSpinAnimation(result) {
+        const { winningColor, winAmount, newBalance } = result;
+        const winningSegmentIndex = findFirstSegmentIndex(winningColor);
+        const randomOffsetInSegment = (Math.random() - 0.5) * segmentAngle * 0.8;
+        const targetAngle = winningSegmentIndex * segmentAngle + randomOffsetInSegment;
+        const finalAngle = (5 * (2 * Math.PI)) + targetAngle;
+        let startTime = null;
+
+        function animate(timestamp) {
+            if (!startTime) startTime = timestamp;
+            const elapsedTime = timestamp - startTime;
+            if (elapsedTime >= 5000) {
+                state.currentAngle = finalAngle % (2 * Math.PI);
+                drawRouletteWheel();
+                onSpinEnd(winAmount, newBalance, winningColor);
+                return;
+            }
+            const progress = elapsedTime / 5000;
+            const easing = 1 - Math.pow(1 - progress, 3);
+            state.currentAngle = finalAngle * easing;
+            drawRouletteWheel();
+            requestAnimationFrame(animate);
+        }
+        requestAnimationFrame(animate);
+    }
+
+    function onSpinEnd(winAmount, newBalance, winningColor) {
+        state.isSpinning = false;
+        updateSpinButton(true, 'Крутить!');
+        updateBalance(newBalance);
+        if (winAmount > 0) { showResultModal("Победа!", `Выпало <b>${winningColor}</b>! <br>Ваш выигрыш: ${winAmount} ⭐`);
+        } else { showResultModal("Проигрыш", `Выпало <b>${winningColor}</b>. <br>В следующий раз повезет!`); }
+    }
+
+    function findFirstSegmentIndex(colorName) { return segments.findIndex(s => s.name === colorName) || 0; }
+
+    // --- Run App ---
+    document.addEventListener('DOMContentLoaded', initializeApp);
+})();
