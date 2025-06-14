@@ -18,8 +18,7 @@
     const modalCloseBtn = document.getElementById('modal-close-btn');
 
     // --- Configuration ---
-    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ ЗАМЕНИТЬ НА ШАГЕ 3
-    const ctx = canvas.getContext('2d');
+    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ НА ВАШ URL
     const segments = [
         { color: '#27ae60', name: 'green' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
         { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
@@ -31,51 +30,40 @@
     
     // --- State ---
     const state = {
-        userId: null,
-        isSpinning: false,
-        selectedColor: null,
-        currentAngle: 0,
-        balance: 0,
+        userId: null, isSpinning: false, selectedColor: null, currentAngle: 0, balance: 0,
     };
 
     // --- Initialization ---
-    function initializeApp() {
+    async function initializeApp() {
         tg.ready();
         tg.expand();
-        state.userId = tg.initDataUnsafe?.user?.id || 'test_user';
-        fetchUserData().then(() => { loader.classList.add('hidden'); });
+        state.userId = tg.initDataUnsafe?.user?.id || 'test_user_123';
+
+        // Сначала рисуем интерфейс, чтобы он всегда был виден
         drawRouletteWheel();
         addEventListeners();
+
+        // Затем пытаемся загрузить данные
+        try {
+            await fetchUserData();
+        } catch (error) {
+            console.error("Initialization failed:", error);
+            balanceAmountEl.textContent = 'Ошибка';
+            userNameEl.textContent = 'Нет связи';
+            tg.showAlert('Не удалось загрузить данные. Проверьте интернет-соединение или попробуйте позже.');
+        } finally {
+            // И в любом случае убираем загрузчик
+            loader.classList.add('hidden');
+        }
     }
 
     // --- API Communication ---
     async function fetchUserData() {
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/user/${state.userId}`);
-            if (!response.ok) throw new Error('Network response was not ok');
-            const data = await response.json();
-            updateBalance(data.balance);
-            userNameEl.textContent = data.name || 'Игрок';
-        } catch (error) {
-            console.error("Error fetching user data:", error);
-            tg.showAlert('Не удалось загрузить данные пользователя.');
-        }
-    }
-
-    async function postSpinRequest() {
-        const betAmount = parseInt(betAmountInput.value, 10);
-        if (isNaN(betAmount) || betAmount <= 0) { tg.showAlert('Некорректная сумма ставки.'); return null; }
-        if (betAmount > state.balance) { tg.showAlert('Недостаточно средств.'); return null; }
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/api/spin`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: state.userId, bet: betAmount, color: state.selectedColor }),
-            });
-            if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error || 'Ошибка сервера'); }
-            return await response.json();
-        } catch (error) { console.error('Spin request failed:', error); tg.showAlert(`Ошибка: ${error.message}`); return null; }
+        const response = await fetch(`${API_BASE_URL}/api/user/${state.userId}`);
+        if (!response.ok) { throw new Error(`Network response was not ok: ${response.statusText}`); }
+        const data = await response.json();
+        updateBalance(data.balance);
+        userNameEl.textContent = data.name || 'Игрок';
     }
 
     // --- UI & Event Handlers ---
@@ -109,7 +97,7 @@
                         body: JSON.stringify({ userId: state.userId, boxType: boxType })
                     });
                     const data = await response.json();
-                    if (!response.ok) throw new Error(data.error);
+                    if (!response.ok) throw new Error(data.error || 'Неизвестная ошибка');
                     updateBalance(data.newBalance);
                     showResultModal("Приз из коробки!", `Поздравляем! Вы выиграли <b>${data.wonAmount} ⭐</b>!`);
                 } catch (error) { tg.showAlert(`Ошибка: ${error.message}`); }
@@ -123,9 +111,12 @@
     function hideResultModal() { modalOverlay.classList.remove('visible'); }
 
     // --- Roulette Drawing & Animation ---
-    function drawRouletteWheel() {
-        const radius = canvas.width / 2;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const drawRouletteWheel = () => {
+        const canvasEl = document.getElementById('roulette-canvas');
+        if (!canvasEl) return;
+        const ctx = canvasEl.getContext('2d');
+        const radius = canvasEl.width / 2;
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
         ctx.save();
         ctx.translate(radius, radius);
         ctx.rotate(state.currentAngle);
@@ -139,22 +130,38 @@
             ctx.fill();
         }
         ctx.restore();
-    }
+    };
 
     async function handleSpin() {
         if (state.isSpinning || !state.selectedColor) return;
+        const betAmount = parseInt(betAmountInput.value, 10);
+        if (isNaN(betAmount) || betAmount <= 0) { tg.showAlert('Некорректная ставка.'); return; }
+        if (betAmount > state.balance) { tg.showAlert('Недостаточно средств.'); return; }
+        
         state.isSpinning = true;
         updateSpinButton(false, 'Вращение...');
-        const result = await postSpinRequest();
-        if (result) {
-            updateBalance(result.newBalance + result.winAmount);
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/spin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: state.userId, bet: betAmount, color: state.selectedColor }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Ошибка вращения');
+            
+            updateBalance(result.newBalance + result.winAmount); // Временно для отображения
             startSpinAnimation(result);
-        } else { state.isSpinning = false; updateSpinButton(true, 'Крутить!'); }
+        } catch (error) {
+            tg.showAlert(`Ошибка: ${error.message}`);
+            state.isSpinning = false;
+            updateSpinButton(true, 'Крутить!');
+            fetchUserData(); // Восстанавливаем актуальный баланс
+        }
     }
 
-    function startSpinAnimation(result) {
-        const { winningColor, winAmount, newBalance } = result;
-        const winningSegmentIndex = findFirstSegmentIndex(winningColor);
+    function startSpinAnimation({ winningColor, winAmount, newBalance }) {
+        const winningSegmentIndex = segments.findIndex(s => s.name === winningColor) || 0;
         const randomOffsetInSegment = (Math.random() - 0.5) * segmentAngle * 0.8;
         const targetAngle = winningSegmentIndex * segmentAngle + randomOffsetInSegment;
         const finalAngle = (5 * (2 * Math.PI)) + targetAngle;
@@ -185,8 +192,6 @@
         if (winAmount > 0) { showResultModal("Победа!", `Выпало <b>${winningColor}</b>! <br>Ваш выигрыш: ${winAmount} ⭐`);
         } else { showResultModal("Проигрыш", `Выпало <b>${winningColor}</b>. <br>В следующий раз повезет!`); }
     }
-
-    function findFirstSegmentIndex(colorName) { return segments.findIndex(s => s.name === colorName) || 0; }
 
     // --- Run App ---
     document.addEventListener('DOMContentLoaded', initializeApp);
