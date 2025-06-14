@@ -1,8 +1,26 @@
+//
+// НОВЫЙ, ИСПРАВЛЕННЫЙ SCRIPT.JS
+//
 (function() {
     'use strict';
 
+    // --- НОВОЕ: Проверяем, запущено ли приложение в Telegram ---
+    // Если window.Telegram.WebApp не существует, создаем "заглушку", чтобы скрипт не падал.
+    const tg = window.Telegram.WebApp || {
+        initDataUnsafe: { user: { id: 'test_user_123', first_name: 'Browser User' } },
+        ready: () => console.log('Telegram WebApp not found, using fallback.'),
+        expand: () => console.log('Telegram WebApp not found, using fallback.'),
+        showAlert: (message) => alert(message), // Используем обычный alert
+        showConfirm: (message, callback) => { // Используем обычный confirm
+            if (confirm(message)) {
+                callback(true);
+            }
+        }
+    };
+
+    const isInsideTelegram = window.Telegram.WebApp.initData !== ""; // Более надежная проверка
+
     // --- DOM Elements ---
-    const tg = window.Telegram.WebApp;
     const loader = document.getElementById('loader');
     const balanceAmountEl = document.getElementById('balance-amount');
     const userNameEl = document.getElementById('user-name');
@@ -18,7 +36,8 @@
     const modalCloseBtn = document.getElementById('modal-close-btn');
 
     // --- Configuration ---
-    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ НА ВАШ URL
+    const API_BASE_URL = 'https://roulette-bot-backend.onrender.com'; // ❗️ УБЕДИТЕСЬ, ЧТО ИСПОЛЬЗУЕТЕ ВАШ URL С RENDER
+
     const segments = [
         { color: '#27ae60', name: 'green' }, { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' },
         { color: '#c0392b', name: 'red' }, { color: '#2c3e50', name: 'black' }, { color: '#c0392b', name: 'red' },
@@ -35,15 +54,15 @@
 
     // --- Initialization ---
     async function initializeApp() {
-        tg.ready();
-        tg.expand();
-        state.userId = tg.initDataUnsafe?.user?.id || 'test_user_123';
+        if (isInsideTelegram) {
+            tg.ready();
+            tg.expand();
+        }
+        state.userId = tg.initDataUnsafe?.user?.id;
 
-        // Сначала рисуем интерфейс, чтобы он всегда был виден
         drawRouletteWheel();
         addEventListeners();
 
-        // Затем пытаемся загрузить данные
         try {
             await fetchUserData();
         } catch (error) {
@@ -52,13 +71,15 @@
             userNameEl.textContent = 'Нет связи';
             tg.showAlert('Не удалось загрузить данные. Проверьте интернет-соединение или попробуйте позже.');
         } finally {
-            // И в любом случае убираем загрузчик
             loader.classList.add('hidden');
         }
     }
 
     // --- API Communication ---
     async function fetchUserData() {
+        if (!state.userId) {
+            throw new Error("User ID is not defined.");
+        }
         const response = await fetch(`${API_BASE_URL}/api/user/${state.userId}`);
         if (!response.ok) { throw new Error(`Network response was not ok: ${response.statusText}`); }
         const data = await response.json();
@@ -150,13 +171,13 @@
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'Ошибка вращения');
             
-            updateBalance(result.newBalance + result.winAmount); // Временно для отображения
+            updateBalance(result.newBalance + result.winAmount);
             startSpinAnimation(result);
         } catch (error) {
             tg.showAlert(`Ошибка: ${error.message}`);
             state.isSpinning = false;
             updateSpinButton(true, 'Крутить!');
-            fetchUserData(); // Восстанавливаем актуальный баланс
+            fetchUserData();
         }
     }
 
